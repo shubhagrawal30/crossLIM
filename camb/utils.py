@@ -4,15 +4,13 @@
 # All rights reserved.
 
 import numpy as np
-from astropy.cosmology import Planck18 as cosmo
+from obj import cosmo
 from astropy import constants as c, units as u
+from lines import CII
 
 h = cosmo.h
-lCII = 157.74 * u.micron # Cooksy et al. 1986
-nuCII = lCII.to(u.Hz, equivalencies=u.spectral()).value
 
-
-def l2z_CII(l_obs, l_emit=lCII):
+def l2z_CII(l_obs, l_emit=CII.l):
     """
     Convert observed wavelength to redshift for CII emission line.
 
@@ -73,7 +71,7 @@ def los_extent(z_min, z_max, lilh=True):
     ext = cosmo.comoving_distance(z_max) - cosmo.comoving_distance(z_min)
     return ext * h if lilh else ext
 
-def dnu2dr(dnu, z, lilh=True, nu_emit=nuCII):
+def dnu2dr(dnu, z, lilh=True, nu_emit=CII.nu):
     """
     Calculate the comoving radial distance corresponding to a (observed) frequency interval.
 
@@ -155,29 +153,6 @@ def num_modes(del_ln_k, k, volume): # TODO: unused
     # return volume * np.log(k[-1] / k[0]) / np.log(1 + del_ln_k)
     return 4 * np.pi * volume * del_ln_k * k ** 3 / (2 * np.pi) ** 3 #TODO: Check this
 
-def Inu(sfrd, z, L0, nu_emit=nuCII):
-    """
-    Calculate the specific intensity of a source at redshift z.
-
-    Parameters:
-    sfrd (float): Star formation rate density in Msun/yr/Mpc^3.
-    z (float or array-like): Redshift value.
-    L0 (float): ratio of line intensity to LIR.
-    nu_emit (float, optional): Rest-frame frequency of the emission line in Hz. 
-            Defaults to nuCII.
-
-    Returns (Quantity): Specific intensity in Jy/sr.
-    """
-    # TODO: try Ryan's various versions for SFRD --> LCII
-    # TODO: L0 definition does not make sense: taken after some computation from DeLooze?
-    if not hasattr(sfrd, "unit"):
-        sfrd *= u.Msun / u.yr / u.Mpc ** 3
-    if not hasattr(nu_emit, "unit"):
-        nu_emit *= u.Hz
-    eps = L0 * sfrd # TODO: stopgap for right now
-    Ivals = c.c * eps / (4 * np.pi * u.sr * cosmo.H(z) * nu_emit)
-    # TODO: (4 * np.pi * cosmo.luminosity_distance(z).to(u.m).value ** 2)
-    return Ivals.to(u.Jy / u.sr).value
 
 def noise_per_cell(z, nei, num_spax, num_dets, time, dAz, dEl, dnu, lilh=True):
     """

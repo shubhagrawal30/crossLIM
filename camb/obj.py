@@ -5,6 +5,9 @@
 
 # maybe useful python objects
 
+# the cosmology used throughout this analysis
+from astropy.cosmology import Planck18 as cosmo
+
 class AttrDict(dict):
     def __getattr__(self, key):
         return self[key]
