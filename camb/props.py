@@ -7,17 +7,10 @@
 
 from astropy import units as u, constants as c
 import utils
+from obj import AttrDict
+from astropy.cosmology import Planck18 as cosmo
+import numpy as np
 
-class AttrDict(dict):
-    def __getattr__(self, key):
-        return self[key]
-
-    def __setattr__(self, key, value):
-        self[key] = value
-        
-    def __delattr__(self, key):
-        del self[key]
-        
 TIM = AttrDict()
 TIM.time = (200*u.hr).to(u.s)
 TIM.window = True
@@ -51,3 +44,7 @@ for band in ['SW', 'LW']:
     TIM[band].zmax = utils.l2z_CII(TIM[band].max)
     TIM[band].ins = utils.Instrument(TIM[band].NEI, TIM[band].FWHM, \
         TIM[band].dnu, TIM[band].num_dets)
+
+AstroDeep = AttrDict()
+# TIM bins, with the full TIM z-range at start and end
+AstroDeep.n_gals = np.array([0.002, 0.005, 0.002, 0.0019713, 0.000836, 0.002]) / cosmo.h ** 3

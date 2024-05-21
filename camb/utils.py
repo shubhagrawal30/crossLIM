@@ -7,7 +7,7 @@ import numpy as np
 from astropy.cosmology import Planck18 as cosmo
 from astropy import constants as c, units as u
 
-h = (cosmo.H0 / (100 * u.km / u.s / u.Mpc)).to("").value
+h = cosmo.h
 lCII = 157.74 * u.micron # Cooksy et al. 1986
 nuCII = lCII.to(u.Hz, equivalencies=u.spectral()).value
 
@@ -169,18 +169,13 @@ def Inu(sfrd, z, L0, nu_emit=nuCII):
     Returns (Quantity): Specific intensity in Jy/sr.
     """
     # TODO: try Ryan's various versions for SFRD --> LCII
-    # TODO: L0 definition does not make sense
+    # TODO: L0 definition does not make sense: taken after some computation from DeLooze?
     if not hasattr(sfrd, "unit"):
         sfrd *= u.Msun / u.yr / u.Mpc ** 3
     if not hasattr(nu_emit, "unit"):
         nu_emit *= u.Hz
-    eps = L0 * sfrd
+    eps = L0 * sfrd # TODO: stopgap for right now
     Ivals = c.c * eps / (4 * np.pi * u.sr * cosmo.H(z) * nu_emit)
-    print(sfrd)
-    print(z)
-    print(L0)
-    print(nu_emit)
-    print(Ivals)
     # TODO: (4 * np.pi * cosmo.luminosity_distance(z).to(u.m).value ** 2)
     return Ivals.to(u.Jy / u.sr).value
 
