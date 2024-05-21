@@ -1,6 +1,6 @@
 # BSD 3-Clause License
 # 
-# Copyright (c) 2024 Shubh Agrawal
+# Copyright (c) 2024 Shubh Agrawal, Justin Bracks
 # All rights reserved.
 
 import numpy as np
