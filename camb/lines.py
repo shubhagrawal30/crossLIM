@@ -84,4 +84,8 @@ def Inu_Spinoglio(sfrd, z, A=0.89, B=2.67):
     # TODO: luminosity distance?
     return Ivals.to(u.Jy / u.sr)
 
-CII.Inu_sfrd_z = CII.Inu = Inu_Spinoglio
+#CII.Inu_sfrd_z = CII.Inu = Inu_Spinoglio
+CII.Inu_sfrd_z = CII.Inu = Inu_proposal
+
+Euclid = AttrDict()
+Euclid.n_gals = np.array([0.0144, 0.01077, 0.0081,0.0056]) #little h included in these numbers.

@@ -46,5 +46,9 @@ for band in ['SW', 'LW']:
         TIM[band].dnu, TIM[band].num_dets)
 
 AstroDeep = AttrDict()
-# TIM bins, with the full TIM z-range at start and end
-AstroDeep.n_gals = np.array([0.002, 0.005, 0.002, 0.0019713, 0.000836, 0.002]) / cosmo.h ** 3
+# TIM bins
+AstroDeep.n_gals = np.array([0.005, 0.002, 0.0019713, 0.000836]) / cosmo.h ** 3
+
+Euclid = AttrDict()
+# TIM bins
+Euclid.n_gals = np.array([0.0144, 0.01077, 0.0081,0.0056]) #little h included in these numbers.
