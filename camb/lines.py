@@ -17,12 +17,11 @@ CII = AttrDict()
 CII.l = 157.74 * u.micron # Cooksy et al. 1986, [CII]
 CII.nu = CII.l.to(u.Hz, equivalencies=u.spectral())
 
-def Inu_proposal(sfrd, z, L0=8.3 * 10**6 * u.Lsun * u.yr / u.Msun, nu_emit=CII.nu):
+def Inu_proposal(z, L0=8.3 * 10**6 * u.Lsun * u.yr / u.Msun, nu_emit=CII.nu):
     """
     Calculate the specific intensity of a source at redshift z, using Juzz's proposal formalization.
 
     Parameters:
-    sfrd (float): Star formation rate density in Msun/yr/Mpc^3.
     z (float or array-like): Redshift value.
     L0 (float): ratio of line intensity to LIR.
     nu_emit (float, optional): Rest-frame frequency of the emission line in Hz. 
@@ -30,6 +29,7 @@ def Inu_proposal(sfrd, z, L0=8.3 * 10**6 * u.Lsun * u.yr / u.Msun, nu_emit=CII.n
 
     Returns (Quantity): Specific intensity in Jy/sr.
     """
+    sfrd = utils.MD_sfrd(z)
     # TODO: try Ryan's various versions for SFRD --> LCII
     # TODO: L0 definition does not make sense: taken after some computation from DeLooze?
     if not hasattr(sfrd, "unit"):
@@ -41,18 +41,18 @@ def Inu_proposal(sfrd, z, L0=8.3 * 10**6 * u.Lsun * u.yr / u.Msun, nu_emit=CII.n
     # TODO: (4 * np.pi * cosmo.luminosity_distance(z).to(u.m).value ** 2)
     return Ivals.to(u.Jy / u.sr)
 
-def Inu_DeLooze(sfrd, z, m=1.01, b=-6.99, nu_emit=CII.nu):
+def Inu_DeLooze(z, m=1.01, b=-6.99, nu_emit=CII.nu):
     """
     Calculate the specific intensity of a source at redshift z, using DeLooze+2014 formalization.
     
     Parameters:
-    sfrd (float): Star formation rate density in Msun/yr/Mpc^3.
     z (float or array-like): Redshift value.
     m (float): Slope of the SFRD-LCII relation.
     b (float): Intercept of the SFRD-LCII relation.
     
     Returns (Quantity): Specific intensity in Jy/sr.
     """
+    sfrd = utils.MD_sfrd(z)
     if hasattr(sfrd, "unit"):
         sfrd = sfrd.to(u.Msun / u.yr / u.Mpc ** 3).value
     Lval = np.power(10, (np.log10(sfrd) - b) / m) * u.Lsun / u.Mpc ** 3
@@ -60,19 +60,19 @@ def Inu_DeLooze(sfrd, z, m=1.01, b=-6.99, nu_emit=CII.nu):
     # TODO: luminosity distance?
     return Ivals.to(u.Jy / u.sr)
 
-def Inu_Spinoglio(sfrd, z, A=0.89, B=2.67):
+def Inu_Spinoglio(z, A=0.89, B=2.67):
     """
     Calculate the specific intensity of a source at redshift z, using Spinoglio+2012 formalization,
     accounting for errata from 2014.
     
     Parameters:
-    sfrd (float): Star formation rate density in Msun/yr/Mpc^3.
     z (float or array-like): Redshift value.
     m (float): Slope of the SFRD-LCII relation.
     b (float): Intercept of the SFRD-LCII relation.
     
     Returns (Quantity): Specific intensity in Jy/sr.
     """
+    sfrd = utils.MD_sfrd(z)
     if hasattr(sfrd, "unit"):
         sfrd = sfrd.to(u.Msun / u.yr / u.Mpc ** 3).value
     L_ir = sfrd * 1e10 * u.Lsun # from simIM code (:missing the per volume factor:)
@@ -84,8 +84,4 @@ def Inu_Spinoglio(sfrd, z, A=0.89, B=2.67):
     # TODO: luminosity distance?
     return Ivals.to(u.Jy / u.sr)
 
-#CII.Inu_sfrd_z = CII.Inu = Inu_Spinoglio
-CII.Inu_sfrd_z = CII.Inu = Inu_proposal
-
-Euclid = AttrDict()
-Euclid.n_gals = np.array([0.0144, 0.01077, 0.0081,0.0056]) #little h included in these numbers.
+CII.Inu = Inu_proposal # Inu(z) using SFRD
