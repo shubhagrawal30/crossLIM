@@ -52,3 +52,31 @@ AstroDeep.n_gals = np.array([0.005, 0.002, 0.0019713, 0.000836]) / cosmo.h ** 3
 Euclid = AttrDict()
 # TIM bins
 Euclid.n_gals = np.array([0.0144, 0.01077, 0.0081,0.0056]) #little h included in these numbers.
+
+
+# Meerkat LADUMA
+LADUMA = AttrDict()
+LADUMA.time = 96 * u.hr
+LADUMA.ndish = 64
+LADUMA.dish = 13.5 * u.m
+LADUMA.minbase = 29 * u.m
+LADUMA.maxbase = 7700 * u.m
+LADUMA.Tsys = 28 * u.K # TODO(shubh): this is nu dependent, but approximating for now
+# https://skaafrica.atlassian.net/servicedesk/customer/portal/1/article/277315585
+
+TIME = AttrDict()
+TIME.time = 3000 * u.hr
+TIME.Dap = 12 * u.m
+TIME.beam = 0.43 * u.arcmin
+TIME.nei = 5e6 * u.Jy * (u.s ** .5) / u.sr
+TIME.nfeed = 32
+TIME.R = 105
+TIME.nu = 250 * u.GHz
+
+FYST = AttrDict()
+FYST.time = 200 * u.hr
+FYST.Dap = 9 * u.m
+FYST.nei = 4.84e4 * u.Jy * (u.s ** .5) / u.sr
+FYST.nfeed = 1
+FYST.Dnu = 40 * u.GHz
+FYST.dnu = 400 * u.MHz

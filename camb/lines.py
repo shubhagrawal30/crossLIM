@@ -94,9 +94,9 @@ CII.Inu = Inu_proposal # Inu(z) using SFRD
 # properties of HI 21 cm
 # ----------------------------------------------------------------
 
-HII = AttrDict()
-HII.l = 21 * u.cm
-HII.nu = HII.l.to(u.Hz, equivalencies=u.spectral())
+HI = AttrDict()
+HI.l = 21 * u.cm
+HI.nu = HI.l.to(u.Hz, equivalencies=u.spectral())
 
 def rho_HI(z, A=4.5e7, B=2.8, C=1.01e8):
     if type(z) is list:
@@ -104,13 +104,18 @@ def rho_HI(z, A=4.5e7, B=2.8, C=1.01e8):
     return (A * np.tanh(1 + z - B) + C) * u.Msun / u.Mpc ** 3
 
 def Omega_HI(z):
-    return rho_HI(z) / rho_HI(0)
+    return rho_HI(z) / cosmo.critical_density(0)
 
 def T_HI(z):
     return 44e-6 * u.K * (Omega_HI(z) * cosmo.h / 2.45e-4) * (1 + z) ** 2 / (cosmo.H(z) / cosmo.H0)
 
 def Inu_HI(z):
-    l = HII.l * (1 + z)
-    return 2 * c.k_B * T_HI(z) / l ** 2
+    l = HI.l * (1 + z)
+    return 2 * c.k_B * T_HI(z) / l ** 2 / u.sr
 
-HII.Inu = Inu_HI
+HI.T = T_HI
+HI.Inu = Inu_HI
+
+CO43 = AttrDict()
+CO43.l = 650 * u.micron
+CO43.bI = 3e2 * u.Jy / u.sr

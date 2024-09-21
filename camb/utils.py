@@ -27,6 +27,19 @@ def l2z_CII(l_obs, l_emit=CII.l):
     assert l_obs > l_emit, "Observed wavelength must be greater than rest-frame wavelength."
     return (l_obs - l_emit) / l_emit
 
+def z2l_CII(z, l_emit=CII.l):
+    """
+    Convert redshift to observed wavelength for CII emission line.
+
+    Parameters:
+    z (float): Redshift value.
+    l_emit (float, optional): The rest-frame wavelength of the CII emission line in micron. 
+            Defaults to lCII.
+
+    Returns: (float) The observed wavelength corresponding to the redshift.
+    """
+    return l_emit * (1 + z)
+
 def num_log_steps(x_start, x_stop, dlnx):
     """
     Calculate the number of steps needed to go from x_start to x_stop with a step size of dlnx.
