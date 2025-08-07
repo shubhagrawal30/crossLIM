@@ -80,3 +80,6 @@ FYST.nei = 4.84e4 * u.Jy * (u.s ** .5) / u.sr
 FYST.nfeed = 1
 FYST.Dnu = 40 * u.GHz
 FYST.dnu = 400 * u.MHz
+FYST.R = 100
+FYST.min = 210 * u.GHz
+FYST.max = 420 * u.GHz
