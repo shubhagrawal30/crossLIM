@@ -32,8 +32,9 @@ RANDOM_SEED = 1511
 GRID_RESOLUTION = 450  # pixels per box edge
 Z_MODELING = 1.0
 CO_LINE = 'L43'  # CO(4-3) line
+nu_co = sc.nu_co43 if CO_LINE == 'L43' else sc.nu_co54
 K_BINS = np.logspace(-3, 3, 21)
-MPC_TO_CM = 3.0857e22
+MPC_TO_M = 3.0857e22
 JY_CONVERSION = 1e26
 
 
@@ -77,7 +78,11 @@ class PowerSpectrumAnalyzer:
         self.grids = {}
         self.power_spectra = {}
         self.cross_power_spectra = {}
-    
+        
+        self.means_and_densities = {}
+        self.props = ["sfr", "sfr_behroozi", "mass", "m_stars_wind", "MHI"]
+        self.lines = ["LCII", "LHI", CO_LINE]
+
     def _setup_cosmology(self):
         """Set up cosmological distance calculations."""
         self.d_comoving = self.snap.cosmo.comoving_distance(self.z).value
@@ -85,11 +90,18 @@ class PowerSpectrumAnalyzer:
         self.hubble_factor = 1000 * self.snap.cosmo.H(self.z).value
     
     def _calculate_conversion_factor(self, nu_rest):
-        """Calculate conversion factor from Lsun/Mpc^3 to Jy/sr."""
+        """Calculate conversion factor to Jy/sr for voxel formalism."""
         y_factor = sc.c / nu_rest * (1 + self.z)**2 / self.hubble_factor
         conversion = (sc.Lsun_to_W / (4 * np.pi * self.d_luminosity**2) * 
                      self.d_comoving**2 * y_factor / self.pixel_size**3 *
-                     1 / MPC_TO_CM**2 * JY_CONVERSION)
+                     1 / MPC_TO_M**2 * JY_CONVERSION)
+        return conversion
+    
+    def _calculate_Ldensity_to_Jy_conversion(self, nu_rest):
+        """Conversion factor from Lsun/Mpc^3 to Jy/sr at redshift self.z."""
+        # conversion factor
+        conversion = (con.c / (4.0 * np.pi)) * \
+            (sc.Lsun_to_W / MPC_TO_M**3) / (self.hubble_factor * (1.0 + self.z) * JY_CONVERSION)
         return conversion
     
     def _calculate_hi_muK_conversion(self):
@@ -139,6 +151,32 @@ class PowerSpectrumAnalyzer:
             kw_remap={'sfr': 'sfr_behroozi'}
         )
     
+    def compute_mean_properties(self):
+
+        volume = self.snap.box_edge ** 3 # Mpc^3
+
+        self.means_and_densities['props'] = {}
+        self.means_and_densities['lines'] = {}
+
+        for prop in self.props:
+            propvals = self.snap.return_property(prop)
+            self.means_and_densities['props'][prop] = {
+                "mean": np.nanmean(propvals),
+                "median": np.nanmedian(propvals),
+                "std": np.nanstd(propvals),
+                "density": np.nansum(propvals) / volume
+            }
+
+        nulines = {"LCII": sc.nu_cii, "LHI": sc.nu_hi, CO_LINE: nu_co}
+
+        for line in self.lines:
+            conv_factor = self._calculate_Ldensity_to_Jy_conversion(nulines[line])
+            linevals = self.snap.return_property(line)
+            self.means_and_densities['lines'][line] = {
+                "meanInu_Lsun/Mpc3": np.nansum(linevals) / volume,
+                "meanInu_Jy/str": np.nansum(linevals) / volume * conv_factor,
+            }
+
     def create_line_grid(self, line_type):
         """Create grid for specific line emission type."""
         if line_type == 'CII':
@@ -152,7 +190,7 @@ class PowerSpectrumAnalyzer:
                                 norm=conv_factor)# * conv_muK)
         
         elif line_type == 'CO':
-            conv_factor = self._calculate_conversion_factor(sc.nu_co43)
+            conv_factor = self._calculate_conversion_factor(nu_co)
             grid = self.snap.grid(CO_LINE, res=self.pixel_size, norm=conv_factor)
         
         else:
@@ -210,6 +248,9 @@ class PowerSpectrumAnalyzer:
         print("Setting up line properties...")
         self.setup_line_properties()
         
+        print("computing mean properties")
+        self.compute_mean_properties()
+
         print("Creating grids and calculating power spectra...")
         line_types = ['CII', 'HI', 'CO']
         
@@ -267,7 +308,7 @@ def load_existing_results(save_path='../outs/', filename='power_spectra_ensemble
     """
     try:
         filepath = f"{save_path}{filename}"
-        data = np.load(filepath)
+        data = np.load(filepath, allow_pickle=True)
         existing_results = {
             'k': data['k'],
             'seeds': data['seeds'],
@@ -277,6 +318,7 @@ def load_existing_results(save_path='../outs/', filename='power_spectra_ensemble
             'ps_cross_hi': data['ps_cross_hi'],
             'ps_cross_co': data['ps_cross_co'],
             'ps_cross_cohi': data['ps_cross_cohi'],
+            'means_and_densities': data['means_and_densities'],
             'metadata': {
                 'n_realizations': int(data['n_realizations']),
                 'random_seed_base': int(data['random_seed_base']),
@@ -326,6 +368,8 @@ def create_analyzer_from_cache(seed, cached_data):
         'COxHI': cached_data['ps_cross_cohi'][seed_idx]
     }
     
+    analyzer.means_and_densities = cached_data['means_and_densities'][seed_idx]
+    
     print(f"Loaded cached results for seed {seed}")
     return analyzer
 
@@ -361,6 +405,9 @@ def save_power_spectra(analyzers, seeds, save_path='../outs/', filename='power_s
     ps_cross_co = np.zeros((n_realizations, n_k))
     ps_cross_cohi = np.zeros((n_realizations, n_k))
     
+    # Mean properties data - store as object array to preserve structure
+    means_and_densities = np.empty(n_realizations, dtype=object)
+    
     # Fill arrays with data from each analyzer
     for i, analyzer in enumerate(analyzers):
         ps_cii[i] = analyzer.power_spectra['CII']
@@ -369,6 +416,8 @@ def save_power_spectra(analyzers, seeds, save_path='../outs/', filename='power_s
         ps_cross_hi[i] = analyzer.cross_power_spectra['CIIxHI']
         ps_cross_co[i] = analyzer.cross_power_spectra['CIIxCO']
         ps_cross_cohi[i] = analyzer.cross_power_spectra['COxHI']
+        
+        means_and_densities[i] = analyzer.means_and_densities
     
     # Save to compressed numpy file
     output_file = f"{save_path}{filename}"
@@ -382,6 +431,7 @@ def save_power_spectra(analyzers, seeds, save_path='../outs/', filename='power_s
         ps_cross_hi=ps_cross_hi,
         ps_cross_co=ps_cross_co,
         ps_cross_cohi=ps_cross_cohi,
+        means_and_densities=means_and_densities,
         # Metadata
         n_realizations=n_realizations,
         random_seed_base=RANDOM_SEED,
@@ -560,7 +610,6 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
     
     # plt.show()
     plt.close('all')
-
 
 def get_optimal_process_count(seeds_to_compute, memory_per_process_gb=6, system_memory_gb=8):
     """
