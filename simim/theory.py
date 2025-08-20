@@ -329,23 +329,38 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
     analyzers = analyzers if isinstance(analyzers, list) else [analyzers]
     
     # Main power spectrum plot
-    fig, ax = plt.subplots(1, 2, figsize=(14, 6), sharex=True)
-    fig.subplots_adjust(wspace=0.4)
+    fig0, ax0 = plt.subplots(1, 2, figsize=(14, 6), sharex=True)
+    fig0.subplots_adjust(wspace=0.4)
     
     # cross correlation coefficient plot
     fig1, ax1 = plt.subplots(1, 1, figsize=(7, 6))
     
-    # Left panel - P(k)
-    ax[0].set(xlabel='k [Mpc$^{-1}$]',
-            ylabel='P(k) [$Jy^2/sr^2/Mpc^3$ or muK$^2$/Mpc$^3$ or Jy/sr muK/Mpc$^3$]',
-            xscale='log', yscale='log')
-    ax[0].grid()
+    # fill between plot
+    fig2, ax2 = plt.subplots(1, 2, figsize=(14, 6), sharex=True)
     
-    # Right panel - k^3 P(k) / 2π²
-    ax[1].set(xlabel='k [Mpc$^{-1}$]',
-            ylabel='k$^3$P(k)/2π$^2$ [$Jy^2/sr^2$ or muK$^2$ or Jy/sr muK]',
-            xscale='log', yscale='log')
-    ax[1].grid()
+    # cross correlation coefficient with uncertainty bands
+    fig4, ax4 = plt.subplots(1, 1, figsize=(7, 6))
+    
+    for ax, fig in zip([ax0, ax2], [fig0, fig2]):
+        # Left panel - P(k)
+        ax[0].set(xlabel='k [Mpc$^{-1}$]',
+                ylabel='P(k) [$Jy^2/sr^2/Mpc^3$ or muK$^2$/Mpc$^3$ or Jy/sr muK/Mpc$^3$]',
+                xscale='log', yscale='log')
+        ax[0].grid()
+        
+        # Right panel - k^3 P(k) / 2π²
+        ax[1].set(xlabel='k [Mpc$^{-1}$]',
+                ylabel='k$^3$P(k)/2π$^2$ [$Jy^2/sr^2$ or muK$^2$ or Jy/sr muK]',
+                xscale='log', yscale='log')
+        ax[1].grid()
+    
+    for ax, fig in zip([ax1, ax4], [fig1, fig4]):
+        ax.set_xscale('log')
+        ax.grid()
+        ax.set_xlabel('k [Mpc$^{-1}$]')
+        ax.set_ylabel('Cross correlation coefficient')
+        ax.set_title('Cross correlation coefficient $P_{CII \\times i} / \\sqrt{P_{CII}P_{i}}$')
+        ax.legend()
     
     for i, analyzer in enumerate(analyzers):
         k = analyzer.k
@@ -366,11 +381,11 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         
         for ps_data, color, label in plot_data:
             lab = label if i == 0 else None  # Only add label for the first plot
-            ax[0].plot(k, ps_data, lw=1, color=color, label=lab, alpha=0.25)
-            ax[1].plot(k, k**3 / (2 * np.pi**2) * ps_data, lw=1, color=color, alpha=0.25, label=lab)
+            ax0[0].plot(k, ps_data, lw=1, color=color, label=lab, alpha=0.25)
+            ax0[1].plot(k, k**3 / (2 * np.pi**2) * ps_data, lw=1, color=color, alpha=0.25, label=lab)
         
-        ax[0].legend(loc='upper right')
-        ax[1].legend(loc='upper right')
+        ax0[0].legend(loc='upper right')
+        ax0[1].legend(loc='upper right')
         
         # Cross-correlation coefficient plot
         prod_ps_hi = np.sqrt(ps_cii * ps_hi)
@@ -380,18 +395,76 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         ax1.plot(k, ps_cross_hi / prod_ps_hi, lw=1, color='k', label=lab1, alpha=0.25)
         ax1.plot(k, ps_cross_co / prod_ps_co, lw=1, color='m', label=lab2, alpha=0.25)
     
-    fig.savefig(f'{fig_path}cross_ps.png', dpi=300, bbox_inches='tight')
+    fig0.savefig(f'{fig_path}cross_ps.png', dpi=300, bbox_inches='tight')
+    
+    # Calculate statistics for fill_between plot
+    n_realizations = len(analyzers)
+    if n_realizations > 1:
+        k = analyzers[0].k
+        
+        # Collect all power spectra
+        all_ps_cii = np.array([analyzer.power_spectra['CII'] for analyzer in analyzers])
+        all_ps_hi = np.array([analyzer.power_spectra['HI'] for analyzer in analyzers])
+        all_ps_co = np.array([analyzer.power_spectra['CO'] for analyzer in analyzers])
+        all_ps_cross_hi = np.array([analyzer.cross_power_spectra['CIIxHI'] for analyzer in analyzers])
+        all_ps_cross_co = np.array([analyzer.cross_power_spectra['CIIxCO'] for analyzer in analyzers])
+        
+        # Calculate percentiles (16th, 50th, 84th for 1-sigma)
+        percentiles = [16, 50, 84]
+        
+        ps_data_sets = [
+            (all_ps_cross_hi, 'k', '$P_{CII \\times HI}$'),
+            (all_ps_cii, 'b', '$P_{CII}$'),
+            (all_ps_hi, 'r', '$P_{HI}$'),
+            (all_ps_co, 'g', '$P_{CO}$'),
+            (all_ps_cross_co, 'm', '$P_{CII \\times CO}$')
+        ]
+        
+        for ps_data, color, label in ps_data_sets:
+            # Calculate percentiles
+            p16, p50, p84 = np.percentile(ps_data, percentiles, axis=0)
+            
+            # Plot median and fill between 16th-84th percentiles
+            ax2[0].plot(k, p50, lw=2, color=color, label=label)
+            ax2[0].fill_between(k, p16, p84, color=color, alpha=0.2)
+            
+            # Same for dimensionless power spectrum
+            p16_dim = k**3 / (2 * np.pi**2) * p16
+            p50_dim = k**3 / (2 * np.pi**2) * p50
+            p84_dim = k**3 / (2 * np.pi**2) * p84
+            
+            ax2[1].plot(k, p50_dim, lw=2, color=color, label=label)
+            ax2[1].fill_between(k, p16_dim, p84_dim, color=color, alpha=0.2)
+        
+        ax2[0].legend(loc='upper right')
+        ax2[1].legend(loc='upper right')
+        
+        fig2.suptitle(f'Power Spectra with 1σ Uncertainty Bands (N={n_realizations})')
+        fig2.savefig(f'{fig_path}cross_ps_fb.png', dpi=300, bbox_inches='tight')
+        
+        # Cross-correlation coefficient uncertainty bands
+        all_cross_coeff_hi = all_ps_cross_hi / np.sqrt(all_ps_cii * all_ps_hi)
+        all_cross_coeff_co = all_ps_cross_co / np.sqrt(all_ps_cii * all_ps_co)
+        
+        # Calculate percentiles for cross-correlation coefficients
+        coeff_hi_p16, coeff_hi_p50, coeff_hi_p84 = np.percentile(all_cross_coeff_hi, percentiles, axis=0)
+        coeff_co_p16, coeff_co_p50, coeff_co_p84 = np.percentile(all_cross_coeff_co, percentiles, axis=0)
+        
+        # Plot cross-correlation coefficients with uncertainty bands
+        ax4.plot(k, coeff_hi_p50, lw=2, color='k', label='$P_{CII \\times HI} / \\sqrt{P_{CII}P_{HI}}$')
+        ax4.fill_between(k, coeff_hi_p16, coeff_hi_p84, color='k', alpha=0.2)
+        
+        ax4.plot(k, coeff_co_p50, lw=2, color='m', label='$P_{CII \\times CO} / \\sqrt{P_{CII}P_{CO}}$')
+        ax4.fill_between(k, coeff_co_p16, coeff_co_p84, color='m', alpha=0.2)
+        
+        fig4.savefig(f'{fig_path}cross_coeff_fb.png', dpi=300, bbox_inches='tight')
+    else:
+        print("Need more than 1 realization for uncertainty bands")
     
     # Configure and show the cross-correlation coefficient plot
-    ax1.set_xscale('log')
-    ax1.grid()
-    ax1.set_xlabel('k [Mpc$^{-1}$]')
-    ax1.set_ylabel('Cross correlation coefficient')
-    ax1.set_title('Cross correlation coefficient $P_{CII \\times i} / \\sqrt{P_{CII}P_{i}}$')
-    ax1.legend()
     fig1.savefig(f'{fig_path}cross_coeff.png', dpi=300, bbox_inches='tight')
     plt.show()
-    plt.close(fig1)
+    plt.close('all')
 
 
 def main(N=3, cache_on=True, seeds=None):
@@ -457,5 +530,5 @@ def main(N=3, cache_on=True, seeds=None):
 
 
 if __name__ == "__main__":
-    main(N=10, cache_on=True)
+    main(N=25, cache_on=True)
 
