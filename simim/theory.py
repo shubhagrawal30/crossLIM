@@ -23,7 +23,7 @@ import simim.siminterface as sim
 from simim import constants as sc
 from simim.galprops import (
     prop_behroozi_sfr, prop_delooze_cii, 
-    prop_li_hi, prop_co_sled
+    prop_li_hi, prop_co_sled, prop_mass_hi
 )
 
 
@@ -117,12 +117,18 @@ class PowerSpectrumAnalyzer:
             rename='LCII', 
             kw_remap={'sfr': 'sfr_behroozi'}
         )
-        
+
+        # neutral hydrogen mass
+        self.snap.make_property(
+            prop_mass_hi, 
+            other_kws={'rng': self.rng, 'cosmo': cosmo},
+            overwrite=True
+        )
+
         # HI line emission
         self.snap.make_property(
             prop_li_hi, 
             overwrite=True, 
-            other_kws={'cosmo': cosmo, 'rng': self.rng}
         )
         
         # CO line emission
@@ -143,7 +149,7 @@ class PowerSpectrumAnalyzer:
             conv_factor = self._calculate_conversion_factor(sc.nu_hi)
             conv_muK = self._calculate_hi_muK_conversion()
             grid = self.snap.grid('LHI', res=self.pixel_size, 
-                                norm=conv_factor * conv_muK)
+                                norm=conv_factor)# * conv_muK)
         
         elif line_type == 'CO':
             conv_factor = self._calculate_conversion_factor(sc.nu_co43)
@@ -215,7 +221,8 @@ class PowerSpectrumAnalyzer:
         # Calculate cross power spectra
         self.calculate_cross_power_spectrum('CII', 'HI')
         self.calculate_cross_power_spectrum('CII', 'CO')
-        
+        self.calculate_cross_power_spectrum('CO', 'HI')
+
         # Clear grids to free memory - we only need the power spectra now
         self.grids.clear()
         gc.collect()
@@ -255,12 +262,8 @@ def run_single_analysis(seed):
 
 
 def load_existing_results(save_path='../outs/', filename='power_spectra_ensemble.npz'):
-    """Load existing power spectra results if they exist.
-    
-    Returns
-    -------
-    existing_data : dict or None
-        Dictionary containing existing results, or None if file doesn't exist
+    """Load existing power spectra results from a numpy file, if it exists.
+    Returns a dict or None if file doesn't exist.
     """
     try:
         filepath = f"{save_path}{filename}"
@@ -273,6 +276,7 @@ def load_existing_results(save_path='../outs/', filename='power_spectra_ensemble
             'ps_co': data['ps_co'],
             'ps_cross_hi': data['ps_cross_hi'],
             'ps_cross_co': data['ps_cross_co'],
+            'ps_cross_cohi': data['ps_cross_cohi'],
             'metadata': {
                 'n_realizations': int(data['n_realizations']),
                 'random_seed_base': int(data['random_seed_base']),
@@ -318,7 +322,8 @@ def create_analyzer_from_cache(seed, cached_data):
     
     analyzer.cross_power_spectra = {
         'CIIxHI': cached_data['ps_cross_hi'][seed_idx],
-        'CIIxCO': cached_data['ps_cross_co'][seed_idx]
+        'CIIxCO': cached_data['ps_cross_co'][seed_idx],
+        'COxHI': cached_data['ps_cross_cohi'][seed_idx]
     }
     
     print(f"Loaded cached results for seed {seed}")
@@ -354,6 +359,7 @@ def save_power_spectra(analyzers, seeds, save_path='../outs/', filename='power_s
     # Cross power spectra
     ps_cross_hi = np.zeros((n_realizations, n_k))
     ps_cross_co = np.zeros((n_realizations, n_k))
+    ps_cross_cohi = np.zeros((n_realizations, n_k))
     
     # Fill arrays with data from each analyzer
     for i, analyzer in enumerate(analyzers):
@@ -362,6 +368,7 @@ def save_power_spectra(analyzers, seeds, save_path='../outs/', filename='power_s
         ps_co[i] = analyzer.power_spectra['CO']
         ps_cross_hi[i] = analyzer.cross_power_spectra['CIIxHI']
         ps_cross_co[i] = analyzer.cross_power_spectra['CIIxCO']
+        ps_cross_cohi[i] = analyzer.cross_power_spectra['COxHI']
     
     # Save to compressed numpy file
     output_file = f"{save_path}{filename}"
@@ -374,6 +381,7 @@ def save_power_spectra(analyzers, seeds, save_path='../outs/', filename='power_s
         ps_co=ps_co,
         ps_cross_hi=ps_cross_hi,
         ps_cross_co=ps_cross_co,
+        ps_cross_cohi=ps_cross_cohi,
         # Metadata
         n_realizations=n_realizations,
         random_seed_base=RANDOM_SEED,
@@ -406,13 +414,13 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
     for ax, fig in zip([ax0, ax2], [fig0, fig2]):
         # Left panel - P(k)
         ax[0].set(xlabel='k [Mpc$^{-1}$]',
-                ylabel='P(k) [$Jy^2/sr^2/Mpc^3$ or muK$^2$/Mpc$^3$ or Jy/sr muK/Mpc$^3$]',
+                ylabel='P(k) [$Jy^2/sr^2/Mpc^3$]', #or muK$^2$/Mpc$^3$ or Jy/sr muK/Mpc$^3$]',
                 xscale='log', yscale='log')
         ax[0].grid()
         
         # Right panel - k^3 P(k) / 2π²
         ax[1].set(xlabel='k [Mpc$^{-1}$]',
-                ylabel='k$^3$P(k)/2π$^2$ [$Jy^2/sr^2$ or muK$^2$ or Jy/sr muK]',
+                ylabel='k$^3$P(k)/2π$^2$ [$Jy^2/sr^2$]', # or muK$^2$ or Jy/sr muK]',
                 xscale='log', yscale='log')
         ax[1].grid()
     
@@ -421,8 +429,7 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         ax.grid()
         ax.set_xlabel('k [Mpc$^{-1}$]')
         ax.set_ylabel('Cross correlation coefficient')
-        ax.set_title('Cross correlation coefficient $P_{CII \\times i} / \\sqrt{P_{CII}P_{i}}$')
-        ax.legend()
+        ax.set_title('Cross correlation coefficient $P_{i \\times j} / \\sqrt{P_{i}P_{j}}$')
     
     for i, analyzer in enumerate(analyzers):
         k = analyzer.k
@@ -431,6 +438,7 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         ps_co = analyzer.power_spectra['CO']
         ps_cross_hi = analyzer.cross_power_spectra['CIIxHI']
         ps_cross_co = analyzer.cross_power_spectra['CIIxCO']
+        ps_cross_cohi = analyzer.cross_power_spectra['COxHI']
         
         # Plot data
         plot_data = [
@@ -438,7 +446,8 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
             (ps_cii, 'b', '$P_{CII}$'),
             (ps_hi, 'r', '$P_{HI}$'),
             (ps_co, 'g', '$P_{CO}$'),
-            (ps_cross_co, 'm', '$P_{CII \\times CO}$')
+            (ps_cross_co, 'm', '$P_{CII \\times CO}$'),
+            (ps_cross_cohi, 'c', '$P_{CO \\times HI}$')
         ]
         
         for ps_data, color, label in plot_data:
@@ -452,11 +461,15 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         # Cross-correlation coefficient plot
         prod_ps_hi = np.sqrt(ps_cii * ps_hi)
         prod_ps_co = np.sqrt(ps_cii * ps_co)
-        lab1 = '$P_{CII \\times HI} / \\sqrt{P_{CII}P_{HI}}$' if i == 0 else None
-        lab2 = '$P_{CII \\times CO} / \\sqrt{P_{CII}P_{CO}}$' if i == 0 else None
+        prod_ps_cohi = np.sqrt(ps_co * ps_hi)
+        lab1 = r'$i$ = CII, $j$ = HI'
+        lab2 = r'$i$ = CII, $j$ = CO'
+        lab3 = r'$i$ = CO, $j$ = HI'
         ax1.plot(k, ps_cross_hi / prod_ps_hi, lw=1, color='k', label=lab1, alpha=0.25)
         ax1.plot(k, ps_cross_co / prod_ps_co, lw=1, color='m', label=lab2, alpha=0.25)
-    
+        ax1.plot(k, ps_cross_cohi / prod_ps_cohi, lw=1, color='c', label=lab3, alpha=0.25) 
+        ax1.legend(loc='upper right') if i == 0 else None
+
     fig0.suptitle(f'Power Spectra for CII, HI, and CO at z={Z_MODELING} (N={len(analyzers)})')
     fig0.savefig(f'{fig_path}cross_ps.png', dpi=300, bbox_inches='tight')
     
@@ -471,6 +484,7 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         all_ps_co = np.array([analyzer.power_spectra['CO'] for analyzer in analyzers])
         all_ps_cross_hi = np.array([analyzer.cross_power_spectra['CIIxHI'] for analyzer in analyzers])
         all_ps_cross_co = np.array([analyzer.cross_power_spectra['CIIxCO'] for analyzer in analyzers])
+        all_ps_cross_cohi = np.array([analyzer.cross_power_spectra['COxHI'] for analyzer in analyzers])
         
         # Calculate percentiles (16th, 50th, 84th for 1-sigma)
         percentiles = [16, 50, 84]
@@ -480,7 +494,8 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
             (all_ps_cii, 'b', '$P_{CII}$'),
             (all_ps_hi, 'r', '$P_{HI}$'),
             (all_ps_co, 'g', '$P_{CO}$'),
-            (all_ps_cross_co, 'm', '$P_{CII \\times CO}$')
+            (all_ps_cross_co, 'm', '$P_{CII \\times CO}$'),
+            (all_ps_cross_cohi, 'c', '$P_{CO \\times HI}$')
         ]
         
         for ps_data, color, label in ps_data_sets:
@@ -502,24 +517,31 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         ax2[0].legend(loc='upper right')
         ax2[1].legend(loc='upper right')
         
-        fig2.suptitle(f'Power Spectra with 1σ Uncertainty Bands (N={n_realizations})')
+        fig2.suptitle(f'Power Spectra with percentile bands at z={Z_MODELING} (N={n_realizations})')
         fig2.savefig(f'{fig_path}cross_ps_fb.png', dpi=300, bbox_inches='tight')
         
         # Cross-correlation coefficient uncertainty bands
         all_cross_coeff_hi = all_ps_cross_hi / np.sqrt(all_ps_cii * all_ps_hi)
         all_cross_coeff_co = all_ps_cross_co / np.sqrt(all_ps_cii * all_ps_co)
+        all_cross_coeff_cohi = all_ps_cross_cohi / np.sqrt(all_ps_co * all_ps_hi)
         
         # Calculate percentiles for cross-correlation coefficients
         coeff_hi_p16, coeff_hi_p50, coeff_hi_p84 = np.percentile(all_cross_coeff_hi, percentiles, axis=0)
         coeff_co_p16, coeff_co_p50, coeff_co_p84 = np.percentile(all_cross_coeff_co, percentiles, axis=0)
+        coeff_cohi_p16, coeff_cohi_p50, coeff_cohi_p84 = np.percentile(all_cross_coeff_cohi, percentiles, axis=0)
         
         # Plot cross-correlation coefficients with uncertainty bands
-        ax4.plot(k, coeff_hi_p50, lw=2, color='k', label='$P_{CII \\times HI} / \\sqrt{P_{CII}P_{HI}}$')
+        ax4.plot(k, coeff_hi_p50, lw=2, color='k', label=lab1)
         ax4.fill_between(k, coeff_hi_p16, coeff_hi_p84, color='k', alpha=0.2)
-        
-        ax4.plot(k, coeff_co_p50, lw=2, color='m', label='$P_{CII \\times CO} / \\sqrt{P_{CII}P_{CO}}$')
+
+        ax4.plot(k, coeff_co_p50, lw=2, color='m', label=lab2)
         ax4.fill_between(k, coeff_co_p16, coeff_co_p84, color='m', alpha=0.2)
-        
+
+        ax4.plot(k, coeff_cohi_p50, lw=2, color='c', label=lab3)
+        ax4.fill_between(k, coeff_cohi_p16, coeff_cohi_p84, color='c', alpha=0.2)
+
+        ax4.legend(loc='upper right')
+
         fig4.savefig(f'{fig_path}cross_coeff_fb.png', dpi=300, bbox_inches='tight')
         
         # Clean up large arrays
@@ -652,11 +674,11 @@ def main(N=3, cache_on=True, seeds=None):
 
 
 if __name__ == "__main__":
-    N = 10
+    N = 3
     if len(sys.argv) > 1:
         try:
             N = int(sys.argv[1])
         except ValueError:
-            print("Invalid argument, using default N=3")
-    main(N=N, cache_on=True)
-
+            print("Invalid argument, using default N")
+    main(N=N, cache_on=False)
+    print("All complete!")
