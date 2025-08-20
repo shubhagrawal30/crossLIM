@@ -11,6 +11,7 @@ from astropy.cosmology import Planck18 as cosmo
 from astropy import units as u, constants as con
 from multiprocessing import Pool
 import os, sys, gc
+from pathlib import Path
 
 try:
     import psutil  # For memory monitoring
@@ -28,15 +29,21 @@ from simim.galprops import (
 
 
 # Configuration constants
+ZINDEX = 0
 RANDOM_SEED = 1511
 GRID_RESOLUTION = 450  # pixels per box edge
-Z_MODELING = 1.0
-CO_LINE = 'L43'  # CO(4-3) line
+Z_MODELING = [0.644, 0.888, 1.173, 1.499][ZINDEX]
+CO_LINE = ['L43', 'L43', 'L54', 'L54'][ZINDEX]
 nu_co = sc.nu_co43 if CO_LINE == 'L43' else sc.nu_co54
 K_BINS = np.logspace(-3, 3, 21)
 MPC_TO_M = 3.0857e22
 JY_CONVERSION = 1e26
 
+SAVEFILENAME = f'power_spectra_ensemble_{Z_MODELING:.2f}.npz'
+OUTDIR = f'../outs/{Z_MODELING:.2f}/'
+FIGDIR = f'../figs/{Z_MODELING:.2f}/'
+Path(OUTDIR).mkdir(parents=True, exist_ok=True)
+Path(FIGDIR).mkdir(parents=True, exist_ok=True)
 
 def get_memory_usage():
     """Get current memory usage in MB."""
@@ -100,8 +107,8 @@ class PowerSpectrumAnalyzer:
     def _calculate_Ldensity_to_Jy_conversion(self, nu_rest):
         """Conversion factor from Lsun/Mpc^3 to Jy/sr at redshift self.z."""
         # conversion factor
-        conversion = (con.c / (4.0 * np.pi)) * \
-            (sc.Lsun_to_W / MPC_TO_M**3) / (self.hubble_factor * (1.0 + self.z) * JY_CONVERSION)
+        conversion = (con.c.to(u.m/u.s).value / (4.0 * np.pi)) * \
+            (sc.Lsun_to_W / MPC_TO_M**3) / (self.snap.cosmo.H(self.z).to(1/u.s).value * nu_rest) * JY_CONVERSION
         return conversion
     
     def _calculate_hi_muK_conversion(self):
@@ -174,7 +181,7 @@ class PowerSpectrumAnalyzer:
             linevals = self.snap.return_property(line)
             self.means_and_densities['lines'][line] = {
                 "meanInu_Lsun/Mpc3": np.nansum(linevals) / volume,
-                "meanInu_Jy/str": np.nansum(linevals) / volume * conv_factor,
+                "meanInu_Jy/sr": np.nanmean(linevals)/volume * conv_factor,
             }
 
     def create_line_grid(self, line_type):
@@ -302,7 +309,7 @@ def run_single_analysis(seed):
     return analyzer
 
 
-def load_existing_results(save_path='../outs/', filename='power_spectra_ensemble.npz'):
+def load_existing_results(save_path=OUTDIR, filename=SAVEFILENAME):
     """Load existing power spectra results from a numpy file, if it exists.
     Returns a dict or None if file doesn't exist.
     """
@@ -374,7 +381,7 @@ def create_analyzer_from_cache(seed, cached_data):
     return analyzer
 
 
-def save_power_spectra(analyzers, seeds, save_path='../outs/', filename='power_spectra_ensemble.npz'):
+def save_power_spectra(analyzers, seeds, save_path=OUTDIR, filename=SAVEFILENAME):
     """Save all power spectra data to a numpy file.
     
     Parameters
@@ -444,7 +451,7 @@ def save_power_spectra(analyzers, seeds, save_path='../outs/', filename='power_s
     print(f"Contains {n_realizations} realizations with {n_k} k-bins each")
 
 
-def plot_power_spectra(analyzers, fig_path='../figs/'):
+def plot_power_spectra(analyzers, fig_path=FIGDIR):
     """Plot power spectra and cross-correlation results."""
     analyzers = analyzers if isinstance(analyzers, list) else [analyzers]
     
@@ -729,5 +736,5 @@ if __name__ == "__main__":
             N = int(sys.argv[1])
         except ValueError:
             print("Invalid argument, using default N")
-    main(N=N, cache_on=False)
+    main(N=N, cache_on=True)
     print("All complete!")
