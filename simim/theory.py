@@ -458,7 +458,6 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         ax1.plot(k, ps_cross_co / prod_ps_co, lw=1, color='m', label=lab2, alpha=0.25)
     
     fig0.savefig(f'{fig_path}cross_ps.png', dpi=300, bbox_inches='tight')
-    plt.close(fig0)  # Close figure to free memory
     
     # Calculate statistics for fill_between plot
     n_realizations = len(analyzers)
@@ -504,7 +503,6 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         
         fig2.suptitle(f'Power Spectra with 1σ Uncertainty Bands (N={n_realizations})')
         fig2.savefig(f'{fig_path}cross_ps_fb.png', dpi=300, bbox_inches='tight')
-        plt.close(fig2)  # Close figure to free memory
         
         # Cross-correlation coefficient uncertainty bands
         all_cross_coeff_hi = all_ps_cross_hi / np.sqrt(all_ps_cii * all_ps_hi)
@@ -522,7 +520,6 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         ax4.fill_between(k, coeff_co_p16, coeff_co_p84, color='m', alpha=0.2)
         
         fig4.savefig(f'{fig_path}cross_coeff_fb.png', dpi=300, bbox_inches='tight')
-        plt.close(fig4)  # Close figure to free memory
         
         # Clean up large arrays
         del all_ps_cii, all_ps_hi, all_ps_co, all_ps_cross_hi, all_ps_cross_co
@@ -530,16 +527,16 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         gc.collect()
     else:
         print("Need more than 1 realization for uncertainty bands")
-        plt.close(fig2)  # Close unused figures
-        plt.close(fig4)
     
     # Configure and show the cross-correlation coefficient plot
     fig1.savefig(f'{fig_path}cross_coeff.png', dpi=300, bbox_inches='tight')
-    plt.close(fig1)  # Close figure to free memory
     
     # Final cleanup
     gc.collect()
     print("All plots saved and memory cleaned up")
+    
+    # plt.show()
+    plt.close('all')
 
 
 def get_optimal_process_count(seeds_to_compute, memory_per_process_mb=2000):
