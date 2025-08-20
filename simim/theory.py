@@ -10,7 +10,14 @@ import matplotlib.pyplot as plt
 from astropy.cosmology import Planck18 as cosmo
 from astropy import units as u, constants as con
 from multiprocessing import Pool
-import os
+import os, sys, gc
+
+try:
+    import psutil  # For memory monitoring
+    PSUTIL_AVAILABLE = True
+except ImportError:
+    PSUTIL_AVAILABLE = False
+    print("psutil not available - memory monitoring disabled")
 
 import simim.siminterface as sim
 from simim import constants as sc
@@ -28,6 +35,24 @@ CO_LINE = 'L43'  # CO(4-3) line
 K_BINS = np.logspace(-3, 3, 21)
 MPC_TO_CM = 3.0857e22
 JY_CONVERSION = 1e26
+
+
+def get_memory_usage():
+    """Get current memory usage in MB."""
+    if PSUTIL_AVAILABLE:
+        process = psutil.Process(os.getpid())
+        return process.memory_info().rss / 1024 / 1024  # MB
+    return None
+
+
+def log_memory(message=""):
+    """Log current memory usage."""
+    if PSUTIL_AVAILABLE:
+        memory_mb = get_memory_usage()
+        print(f"Memory usage {message}: {memory_mb:.1f} MB")
+    else:
+        print(f"Memory logging disabled {message}")
+
 
 class PowerSpectrumAnalyzer:
     """Class to handle power spectrum calculations and analysis."""
@@ -143,6 +168,11 @@ class PowerSpectrumAnalyzer:
         ps1d_normalized = ps1d[:, 0] / np.prod(grid.side_length)
         
         self.power_spectra[line_type] = ps1d_normalized
+        
+        # Clean up intermediate power spectrum object to save memory
+        del ps
+        gc.collect()
+        
         return ps1d_normalized
     
     def calculate_cross_power_spectrum(self, line1, line2):
@@ -162,6 +192,11 @@ class PowerSpectrumAnalyzer:
         
         cross_key = f"{line1}x{line2}"
         self.cross_power_spectra[cross_key] = ps1d_normalized
+        
+        # Clean up intermediate cross power spectrum object
+        del cross_ps
+        gc.collect()
+        
         return ps1d_normalized
     
     def run_full_analysis(self):
@@ -181,14 +216,41 @@ class PowerSpectrumAnalyzer:
         self.calculate_cross_power_spectrum('CII', 'HI')
         self.calculate_cross_power_spectrum('CII', 'CO')
         
+        # Clear grids to free memory - we only need the power spectra now
+        self.grids.clear()
+        gc.collect()
+        
         print("Analysis complete!")
+    
+    def cleanup_memory(self):
+        """Clean up large objects to free memory."""
+        # Clear grids (largest memory users)
+        self.grids.clear()
+        
+        # Clear simulation handler caches if they exist
+        if hasattr(self.sim_handler, 'clear_cache'):
+            self.sim_handler.clear_cache()
+        
+        # Force garbage collection
+        gc.collect()
+        print(f"Cleaned up analyzer memory for seed {self.rng.bit_generator._seed_seq.entropy}")
 
 
 def run_single_analysis(seed):
     """Run a single analysis with given random seed - for multiprocessing."""
+    log_memory(f"before analysis (seed {seed})")
+    
     print(f"Running analysis with seed {seed}")
     analyzer = PowerSpectrumAnalyzer(random_seed=seed)
     analyzer.run_full_analysis()
+    
+    log_memory(f"after analysis (seed {seed})")
+    
+    # Force garbage collection after each analysis to free memory
+    gc.collect()
+    
+    log_memory(f"after cleanup (seed {seed})")
+    
     return analyzer
 
 
@@ -396,6 +458,7 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         ax1.plot(k, ps_cross_co / prod_ps_co, lw=1, color='m', label=lab2, alpha=0.25)
     
     fig0.savefig(f'{fig_path}cross_ps.png', dpi=300, bbox_inches='tight')
+    plt.close(fig0)  # Close figure to free memory
     
     # Calculate statistics for fill_between plot
     n_realizations = len(analyzers)
@@ -441,6 +504,7 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         
         fig2.suptitle(f'Power Spectra with 1σ Uncertainty Bands (N={n_realizations})')
         fig2.savefig(f'{fig_path}cross_ps_fb.png', dpi=300, bbox_inches='tight')
+        plt.close(fig2)  # Close figure to free memory
         
         # Cross-correlation coefficient uncertainty bands
         all_cross_coeff_hi = all_ps_cross_hi / np.sqrt(all_ps_cii * all_ps_hi)
@@ -458,13 +522,63 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         ax4.fill_between(k, coeff_co_p16, coeff_co_p84, color='m', alpha=0.2)
         
         fig4.savefig(f'{fig_path}cross_coeff_fb.png', dpi=300, bbox_inches='tight')
+        plt.close(fig4)  # Close figure to free memory
+        
+        # Clean up large arrays
+        del all_ps_cii, all_ps_hi, all_ps_co, all_ps_cross_hi, all_ps_cross_co
+        del all_cross_coeff_hi, all_cross_coeff_co
+        gc.collect()
     else:
         print("Need more than 1 realization for uncertainty bands")
+        plt.close(fig2)  # Close unused figures
+        plt.close(fig4)
     
     # Configure and show the cross-correlation coefficient plot
     fig1.savefig(f'{fig_path}cross_coeff.png', dpi=300, bbox_inches='tight')
-    plt.show()
-    plt.close('all')
+    plt.close(fig1)  # Close figure to free memory
+    
+    # Final cleanup
+    gc.collect()
+    print("All plots saved and memory cleaned up")
+
+
+def get_optimal_process_count(seeds_to_compute, memory_per_process_mb=2000):
+    """
+    Determine optimal number of processes based on available memory.
+    
+    Parameters
+    ----------
+    seeds_to_compute : list
+        List of seeds to compute
+    memory_per_process_mb : float
+        Estimated memory per process in MB
+    
+    Returns
+    -------
+    int
+        Optimal number of processes
+    """
+    n_cpu = os.cpu_count()
+    n_seeds = len(seeds_to_compute)
+    
+    if PSUTIL_AVAILABLE:
+        # Get available memory (leave 2GB for system)
+        available_memory_mb = psutil.virtual_memory().available / 1024 / 1024 - 2000
+        memory_limited_processes = max(1, int(available_memory_mb / memory_per_process_mb))
+        
+        # Choose minimum of CPU-limited, memory-limited, and seeds-limited
+        optimal = min(n_cpu // 2, memory_limited_processes, n_seeds)
+        
+        print(f"Available memory: {available_memory_mb:.0f} MB")
+        print(f"Estimated memory per process: {memory_per_process_mb} MB")
+        print(f"CPU-limited processes: {n_cpu // 2}")
+        print(f"Memory-limited processes: {memory_limited_processes}")
+        print(f"Optimal processes: {optimal}")
+        
+        return optimal
+    else:
+        # Fallback to CPU-based calculation
+        return min(n_seeds, n_cpu // 2)
 
 
 def main(N=3, cache_on=True, seeds=None):
@@ -501,10 +615,11 @@ def main(N=3, cache_on=True, seeds=None):
     
     # Compute any remaining seeds
     if seeds_to_compute:
-        # Determine number of processes (use available CPUs, but cap at number of seeds to compute)
-        n_processes = min(len(seeds_to_compute), os.cpu_count() // 2)
-        print(f"Using {os.cpu_count()} CPUs, capping at {n_processes} processes.")
+        # Determine optimal number of processes based on memory and CPU
+        n_processes = get_optimal_process_count(seeds_to_compute)
         print(f"Running {len(seeds_to_compute)} realizations using {n_processes} processes...")
+        
+        log_memory("before multiprocessing")
         
         # Run analyses in parallel
         with Pool(processes=n_processes) as pool:
@@ -512,6 +627,10 @@ def main(N=3, cache_on=True, seeds=None):
         
         analyzers.extend(new_analyzers)
         print(f"Computed {len(seeds_to_compute)} new realizations!")
+        
+        # Force garbage collection after multiprocessing
+        gc.collect()
+        log_memory("after multiprocessing")
     
     # Sort analyzers by seed to maintain consistent ordering
     analyzers.sort(key=lambda x: x.rng.bit_generator._seed_seq.entropy)
@@ -525,10 +644,20 @@ def main(N=3, cache_on=True, seeds=None):
     
     print(f"Plotting results from {len(analyzers)} realizations...")
     
+    log_memory("before plotting")
+    
     # Create plots with all realizations
     plot_power_spectra(analyzers)
+    
+    log_memory("after plotting")
 
 
 if __name__ == "__main__":
-    main(N=25, cache_on=True)
+    N = 10
+    if len(sys.argv) > 1:
+        try:
+            N = int(sys.argv[1])
+        except ValueError:
+            print("Invalid argument, using default N=3")
+    main(N=N, cache_on=True)
 
