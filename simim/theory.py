@@ -457,6 +457,7 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
         ax1.plot(k, ps_cross_hi / prod_ps_hi, lw=1, color='k', label=lab1, alpha=0.25)
         ax1.plot(k, ps_cross_co / prod_ps_co, lw=1, color='m', label=lab2, alpha=0.25)
     
+    fig0.suptitle(f'Power Spectra for CII, HI, and CO at z={Z_MODELING} (N={len(analyzers)})')
     fig0.savefig(f'{fig_path}cross_ps.png', dpi=300, bbox_inches='tight')
     
     # Calculate statistics for fill_between plot
@@ -539,7 +540,7 @@ def plot_power_spectra(analyzers, fig_path='../figs/'):
     plt.close('all')
 
 
-def get_optimal_process_count(seeds_to_compute, memory_per_process_mb=2000):
+def get_optimal_process_count(seeds_to_compute, memory_per_process_gb=6, system_memory_gb=8):
     """
     Determine optimal number of processes based on available memory.
     
@@ -557,10 +558,11 @@ def get_optimal_process_count(seeds_to_compute, memory_per_process_mb=2000):
     """
     n_cpu = os.cpu_count()
     n_seeds = len(seeds_to_compute)
+    memory_per_process_mb = memory_per_process_gb * 1024  # Convert GB to MB
     
     if PSUTIL_AVAILABLE:
-        # Get available memory (leave 2GB for system)
-        available_memory_mb = psutil.virtual_memory().available / 1024 / 1024 - 2000
+        # Get available memory (leave X GB for system)
+        available_memory_mb = psutil.virtual_memory().available / 1024 / 1024 - system_memory_gb * 1024
         memory_limited_processes = max(1, int(available_memory_mb / memory_per_process_mb))
         
         # Choose minimum of CPU-limited, memory-limited, and seeds-limited
