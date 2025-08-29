@@ -29,7 +29,7 @@ from simim.galprops import (
 
 
 # Configuration constants
-ZINDEX = 0
+ZINDEX = int(sys.argv[2]) if len(sys.argv) > 2 else 0
 RANDOM_SEED = 1511
 GRID_RESOLUTION = 450  # pixels per box edge
 Z_MODELING = [0.644, 0.888, 1.173, 1.499][ZINDEX]
@@ -41,7 +41,7 @@ JY_CONVERSION = 1e26
 
 SAVEFILENAME = f'power_spectra_ensemble_{Z_MODELING:.2f}.npz'
 OUTDIR = f'../outs/{Z_MODELING:.2f}/'
-FIGDIR = f'../figs/{Z_MODELING:.2f}/'
+FIGDIR = f'../outs/{Z_MODELING:.2f}/'
 Path(OUTDIR).mkdir(parents=True, exist_ok=True)
 Path(FIGDIR).mkdir(parents=True, exist_ok=True)
 
@@ -123,7 +123,7 @@ class PowerSpectrumAnalyzer:
         # Star formation rate (Behroozi)
         self.snap.make_property(
             prop_behroozi_sfr, 
-            other_kws={'rng': self.rng}, 
+            other_kws={'rng': self.rng, 'sigma_scatter': 0.3}, 
             overwrite=True, 
             rename='sfr_behroozi'
         )
@@ -181,7 +181,7 @@ class PowerSpectrumAnalyzer:
             linevals = self.snap.return_property(line)
             self.means_and_densities['lines'][line] = {
                 "meanInu_Lsun/Mpc3": np.nansum(linevals) / volume,
-                "meanInu_Jy/sr": np.nanmean(linevals)/volume * conv_factor,
+                "meanInu_Jy/sr": np.nansum(linevals)/volume * conv_factor,
             }
 
     def create_line_grid(self, line_type):
@@ -472,21 +472,22 @@ def plot_power_spectra(analyzers, fig_path=FIGDIR):
         # Left panel - P(k)
         ax[0].set(xlabel='k [Mpc$^{-1}$]',
                 ylabel='P(k) [$Jy^2/sr^2/Mpc^3$]', #or muK$^2$/Mpc$^3$ or Jy/sr muK/Mpc$^3$]',
-                xscale='log', yscale='log')
+                xscale='log', yscale='log', ylim=(1e1, 1e12))
         ax[0].grid()
         
         # Right panel - k^3 P(k) / 2π²
         ax[1].set(xlabel='k [Mpc$^{-1}$]',
                 ylabel='k$^3$P(k)/2π$^2$ [$Jy^2/sr^2$]', # or muK$^2$ or Jy/sr muK]',
-                xscale='log', yscale='log')
+                xscale='log', yscale='log', ylim=(1e0, 1e13))
         ax[1].grid()
     
     for ax, fig in zip([ax1, ax4], [fig1, fig4]):
         ax.set_xscale('log')
         ax.grid()
+        ax.set_ylim(.2, 1.0)
         ax.set_xlabel('k [Mpc$^{-1}$]')
         ax.set_ylabel('Cross correlation coefficient')
-        ax.set_title('Cross correlation coefficient $P_{i \\times j} / \\sqrt{P_{i}P_{j}}$')
+        ax.set_title('Cross correlation coefficient $P_{i \\times j} / \\sqrt{P_{i}P_{j}}$' f' at z={Z_MODELING:.2f}')
     
     for i, analyzer in enumerate(analyzers):
         k = analyzer.k
@@ -528,7 +529,7 @@ def plot_power_spectra(analyzers, fig_path=FIGDIR):
         ax1.legend(loc='upper right') if i == 0 else None
 
     fig0.suptitle(f'Power Spectra for CII, HI, and CO at z={Z_MODELING} (N={len(analyzers)})')
-    fig0.savefig(f'{fig_path}cross_ps.png', dpi=300, bbox_inches='tight')
+    fig0.savefig(f'{fig_path}cross_ps_{Z_MODELING:.2f}.png', dpi=300, bbox_inches='tight')
     
     # Calculate statistics for fill_between plot
     n_realizations = len(analyzers)
@@ -575,7 +576,7 @@ def plot_power_spectra(analyzers, fig_path=FIGDIR):
         ax2[1].legend(loc='upper right')
         
         fig2.suptitle(f'Power Spectra with percentile bands at z={Z_MODELING} (N={n_realizations})')
-        fig2.savefig(f'{fig_path}cross_ps_fb.png', dpi=300, bbox_inches='tight')
+        fig2.savefig(f'{fig_path}cross_ps_fb_{Z_MODELING:.2f}.png', dpi=300, bbox_inches='tight')
         
         # Cross-correlation coefficient uncertainty bands
         all_cross_coeff_hi = all_ps_cross_hi / np.sqrt(all_ps_cii * all_ps_hi)
@@ -599,7 +600,7 @@ def plot_power_spectra(analyzers, fig_path=FIGDIR):
 
         ax4.legend(loc='upper right')
 
-        fig4.savefig(f'{fig_path}cross_coeff_fb.png', dpi=300, bbox_inches='tight')
+        fig4.savefig(f'{fig_path}cross_coeff_fb_{Z_MODELING:.2f}.png', dpi=300, bbox_inches='tight')
         
         # Clean up large arrays
         del all_ps_cii, all_ps_hi, all_ps_co, all_ps_cross_hi, all_ps_cross_co
@@ -609,7 +610,7 @@ def plot_power_spectra(analyzers, fig_path=FIGDIR):
         print("Need more than 1 realization for uncertainty bands")
     
     # Configure and show the cross-correlation coefficient plot
-    fig1.savefig(f'{fig_path}cross_coeff.png', dpi=300, bbox_inches='tight')
+    fig1.savefig(f'{fig_path}cross_coeff_{Z_MODELING:.2f}.png', dpi=300, bbox_inches='tight')
     
     # Final cleanup
     gc.collect()
