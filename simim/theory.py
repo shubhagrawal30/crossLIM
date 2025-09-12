@@ -33,11 +33,12 @@ ZINDEX = int(sys.argv[2]) if len(sys.argv) > 2 else 0
 RANDOM_SEED = 1511
 GRID_RESOLUTION = 450  # pixels per box edge
 Z_MODELING = [0.644, 0.888, 1.173, 1.499][ZINDEX]
+Z_MODELING = [.32, .44][ZINDEX]
 CO_LINE = ['L43', 'L43', 'L54', 'L54'][ZINDEX]
 nu_co = sc.nu_co43 if CO_LINE == 'L43' else sc.nu_co54
 K_BINS = np.logspace(-3, 3, 21)
-MPC_TO_M = 3.0857e22
-JY_CONVERSION = 1e26
+MPC_TO_M = u.Mpc.to(u.m)
+JY_CONVERSION = 1/u.Jy.to(u.W / u.m**2 / u.Hz)
 
 SAVEFILENAME = f'power_spectra_ensemble_{Z_MODELING:.2f}.npz'
 OUTDIR = f'../outs/{Z_MODELING:.2f}/'
