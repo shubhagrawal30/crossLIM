@@ -116,6 +116,14 @@ def Inu_HI(z):
 HI.T = T_HI
 HI.Inu = Inu_HI
 
+# CO43 = AttrDict()
+# CO43.l = 650 * u.micron
+# CO43.bI = 3e2 * u.Jy / u.sr
+
 CO43 = AttrDict()
-CO43.l = 650 * u.micron
-CO43.bI = 3e2 * u.Jy / u.sr
+CO43.nu = 461.08 * u.GHz
+CO43.l = CO43.nu.to(u.micron, equivalencies=u.spectral())
+
+CO54 = AttrDict()
+CO54.nu = 576.35 * u.GHz
+CO54.l = CO54.nu.to(u.micron, equivalencies=u.spectral())
