@@ -65,7 +65,8 @@ LADUMA.minbase = 29 * u.m
 LADUMA.maxbase = 2000 * u.m
 LADUMA.Tsys = 28 * u.K # TODO(shubh): this is nu dependent, but approximating for now
 # https://skaafrica.atlassian.net/servicedesk/customer/portal/1/article/277315585
-LADUMA.dnu = 208.984 * u.kHz # channel width
+# LADUMA.dnu = 208.984 * u.kHz # channel width
+LADUMA.dnu = 132.812 * u.kHz # channel width
 LADUMA.line = l.HI
 LADUMA.zmin = 0.0
 LADUMA.zmax = 1.6
@@ -90,11 +91,13 @@ TIME.nu = 250 * u.GHz
 FYST = AttrDict()
 FYST.time = 200 * u.hr
 FYST.Dap = 6 * u.m
-FYST.NEI = 1.8e4 * u.Jy * (u.s ** .5) / u.sr # https://articles.adsabs.harvard.edu/pdf/2023pcsf.conf..352N
+# FYST.NEI = 1.8e4 * u.Jy * (u.s ** .5) / u.sr # https://articles.adsabs.harvard.edu/pdf/2023pcsf.conf..352N
+FYST.NEFD = 81e-3 * u.Jy * (u.s ** .5) # mulitply this by beam
 # band is around 250 GHz
 FYST.dnu = 2.8 * u.GHz
 FYST.R = 100
-FYST.nbeams = 6912
+FYST.nbeams = 6912 * 0.8 # 80% efficiency
+# FYST.nbeams = 8400 * 0.8 # 80% efficiency
 
 FYST.CO43 = AttrDict()
 FYST.CO43.zmin = 0.5
@@ -103,7 +106,8 @@ FYST.CO43.zcen = (FYST.CO43.zmin + FYST.CO43.zmax) / 2
 FYST.CO43.line = l.CO43
 FYST.CO43.obslam = l.CO43.l * (1 + FYST.CO43.zcen)
 FYST.CO43.FWHM = ((1.22 * FYST.CO43.obslam) / FYST.Dap).to("").value * u.rad
-FYST.CO43.ins = utils.Instrument(FYST.NEI, FYST.CO43.FWHM, FYST.dnu, FYST.nbeams)
+FYST.CO43.NEI = FYST.NEFD / (FYST.CO43.FWHM ** 2).to(u.sr)
+FYST.CO43.ins = utils.Instrument(FYST.CO43.NEI, FYST.CO43.FWHM, FYST.dnu, FYST.nbeams)
 FYST.CO43.min = FYST.CO43.line.l * (1 + FYST.CO43.zmin)
 FYST.CO43.max = FYST.CO43.line.l * (1 + FYST.CO43.zmax)
 
@@ -115,7 +119,8 @@ FYST.CO54.zcen = (FYST.CO54.zmin + FYST.CO54.zmax) / 2
 FYST.CO54.line = l.CO54
 FYST.CO54.obslam = l.CO54.l * (1 + FYST.CO54.zcen)
 FYST.CO54.FWHM = ((1.22 * FYST.CO54.obslam) / FYST.Dap).to("").value * u.rad
-FYST.CO54.ins = utils.Instrument(FYST.NEI, FYST.CO54.FWHM, FYST.dnu, FYST.nbeams)
+FYST.CO54.NEI = FYST.NEFD / (FYST.CO54.FWHM ** 2).to(u.sr)
+FYST.CO54.ins = utils.Instrument(FYST.CO54.NEI, FYST.CO54.FWHM, FYST.dnu, FYST.nbeams)
 FYST.CO54.min = FYST.CO54.line.l * (1 + FYST.CO54.zmin)
 FYST.CO54.max = FYST.CO54.line.l * (1 + FYST.CO54.zmax)
 

@@ -10,7 +10,8 @@ import matplotlib.pyplot as plt
 from astropy.cosmology import Planck18 as cosmo
 from astropy import units as u, constants as con
 from multiprocessing import Pool
-import os, sys, gc
+import os, sys, gc, pickle
+from itertools import product
 from pathlib import Path
 
 try:
@@ -24,7 +25,8 @@ import simim.siminterface as sim
 from simim import constants as sc
 from simim.galprops import (
     prop_behroozi_sfr, prop_delooze_cii, 
-    prop_li_hi, prop_co_sled, prop_mass_hi
+    prop_li_hi, prop_co_sled, prop_mass_hi,
+    prop_halpha, prop_galaxy_survey
 )
 
 
@@ -33,16 +35,23 @@ ZINDEX = int(sys.argv[2]) if len(sys.argv) > 2 else 0
 RANDOM_SEED = 1511
 GRID_RESOLUTION = 450  # pixels per box edge
 Z_MODELING = [0.644, 0.888, 1.173, 1.499][ZINDEX]
-Z_MODELING = [.32, .44][ZINDEX]
+# Z_MODELING = [.32, .44][ZINDEX]
 CO_LINE = ['L43', 'L43', 'L54', 'L54'][ZINDEX]
 nu_co = sc.nu_co43 if CO_LINE == 'L43' else sc.nu_co54
 K_BINS = np.logspace(-3, 3, 21)
 MPC_TO_M = u.Mpc.to(u.m)
 JY_CONVERSION = 1/u.Jy.to(u.W / u.m**2 / u.Hz)
+EUCLID_FLUXCUT = 6.9e-17  # erg/s/cm^2
+EUCLID_FLUXCUT_SCATTER = 2.8e-17  # scatter in flux cut
+NIIcorr = 0.4  # [NII] contamination fraction for H-alpha
+LINES = ['CII', 'HI', 'CO', 'Halpha', 'galaxy']
+SFR_SCATTER = 0.3
+SFR_AMP_SCATTER = 0.1
+IMFFAC = 1 # / 0.63 # divide for Salpeter, 1 for Chabrier
 
 SAVEFILENAME = f'power_spectra_ensemble_{Z_MODELING:.2f}.npz'
-OUTDIR = f'../outs/{Z_MODELING:.2f}/'
-FIGDIR = f'../outs/{Z_MODELING:.2f}/'
+OUTDIR = f'../outs/new/{Z_MODELING:.2f}/'
+FIGDIR = f'../outs/new/{Z_MODELING:.2f}/'
 Path(OUTDIR).mkdir(parents=True, exist_ok=True)
 Path(FIGDIR).mkdir(parents=True, exist_ok=True)
 
@@ -70,6 +79,7 @@ class PowerSpectrumAnalyzer:
         """Initialize the analyzer with simulation data."""
         self.sim_handler = sim.SimHandler(sim_name)
         self.rng = np.random.default_rng(random_seed)
+        self.galfluxcut = self.rng.normal(EUCLID_FLUXCUT, EUCLID_FLUXCUT_SCATTER)
         self.pixel_size = self.sim_handler.box_edge_no_h / GRID_RESOLUTION
         self.z = z
         self.snap = self.sim_handler.get_snap_from_z(self.z)
@@ -88,8 +98,8 @@ class PowerSpectrumAnalyzer:
         self.cross_power_spectra = {}
         
         self.means_and_densities = {}
-        self.props = ["sfr", "sfr_behroozi", "mass", "m_stars_wind", "MHI"]
-        self.lines = ["LCII", "LHI", CO_LINE]
+        self.props = ["sfr", "sfr_behroozi", "mass", "m_stars_wind", "MHI", "ngal"]
+        self.lines = ["LCII", "LHI", CO_LINE, "LHa"]
 
     def _setup_cosmology(self):
         """Set up cosmological distance calculations."""
@@ -124,7 +134,8 @@ class PowerSpectrumAnalyzer:
         # Star formation rate (Behroozi)
         self.snap.make_property(
             prop_behroozi_sfr, 
-            other_kws={'rng': self.rng, 'sigma_scatter': 0.3}, 
+            other_kws={'rng': self.rng, 'sigma_scatter': SFR_SCATTER, 
+                       'amp_scatter': SFR_AMP_SCATTER, 'imffac': IMFFAC}, 
             overwrite=True, 
             rename='sfr_behroozi'
         )
@@ -158,6 +169,22 @@ class PowerSpectrumAnalyzer:
             overwrite=True, 
             kw_remap={'sfr': 'sfr_behroozi'}
         )
+        
+        # H-alpha line emission
+        self.snap.make_property(
+            prop_halpha,
+            other_kws={'rng': self.rng},
+            overwrite=True,
+            kw_remap={'sfr': 'sfr_behroozi'}
+        )
+        
+        # Galaxy survey (e.g., Euclid-like)
+        self.snap.make_property(
+            prop_galaxy_survey,
+            other_kws={'fluxcut': self.galfluxcut,
+                    'NIIcorr': NIIcorr, 'cosmo': cosmo},
+            overwrite=True,
+        )
     
     def compute_mean_properties(self):
 
@@ -175,7 +202,10 @@ class PowerSpectrumAnalyzer:
                 "density": np.nansum(propvals) / volume
             }
 
-        nulines = {"LCII": sc.nu_cii, "LHI": sc.nu_hi, CO_LINE: nu_co}
+        nulines = {"LCII": sc.nu_cii, 
+                   "LHI": sc.nu_hi, 
+                   CO_LINE: nu_co,
+                   "LHa": sc.nu_halpha}
 
         for line in self.lines:
             conv_factor = self._calculate_Ldensity_to_Jy_conversion(nulines[line])
@@ -184,23 +214,30 @@ class PowerSpectrumAnalyzer:
                 "meanInu_Lsun/Mpc3": np.nansum(linevals) / volume,
                 "meanInu_Jy/sr": np.nansum(linevals)/volume * conv_factor,
             }
+        
+        self.means_and_densities['galfluxcut'] = self.galfluxcut
 
     def create_line_grid(self, line_type):
         """Create grid for specific line emission type."""
         if line_type == 'CII':
             conv_factor = self._calculate_conversion_factor(sc.nu_cii)
             grid = self.snap.grid('LCII', res=self.pixel_size, norm=conv_factor)
-        
         elif line_type == 'HI':
             conv_factor = self._calculate_conversion_factor(sc.nu_hi)
             conv_muK = self._calculate_hi_muK_conversion()
             grid = self.snap.grid('LHI', res=self.pixel_size, 
                                 norm=conv_factor)# * conv_muK)
-        
         elif line_type == 'CO':
             conv_factor = self._calculate_conversion_factor(nu_co)
             grid = self.snap.grid(CO_LINE, res=self.pixel_size, norm=conv_factor)
-        
+        elif line_type == 'Halpha':
+            conv_factor = self._calculate_conversion_factor(sc.nu_halpha)
+            grid = self.snap.grid('LHa', res=self.pixel_size, norm=conv_factor)
+        elif line_type == 'galaxy':
+            # Galaxy overdensity field
+            grid = self.snap.grid('ngal', res=self.pixel_size)
+            grid.grid /= np.mean(grid.grid)
+            grid.grid -= 1.0
         else:
             raise ValueError(f"Unknown line type: {line_type}")
         
@@ -260,7 +297,7 @@ class PowerSpectrumAnalyzer:
         self.compute_mean_properties()
 
         print("Creating grids and calculating power spectra...")
-        line_types = ['CII', 'HI', 'CO']
+        line_types = LINES
         
         # Create grids and calculate auto power spectra
         for line_type in line_types:
@@ -268,9 +305,9 @@ class PowerSpectrumAnalyzer:
             self.calculate_power_spectrum(line_type)
         
         # Calculate cross power spectra
-        self.calculate_cross_power_spectrum('CII', 'HI')
-        self.calculate_cross_power_spectrum('CII', 'CO')
-        self.calculate_cross_power_spectrum('CO', 'HI')
+        for line1, line2 in product(line_types, repeat=2):
+            if line1 < line2:  # Avoid duplicate calculations
+                self.calculate_cross_power_spectrum(line1, line2)
 
         # Clear grids to free memory - we only need the power spectra now
         self.grids.clear()
@@ -314,18 +351,15 @@ def load_existing_results(save_path=OUTDIR, filename=SAVEFILENAME):
     """Load existing power spectra results from a numpy file, if it exists.
     Returns a dict or None if file doesn't exist.
     """
+    lines = LINES
+    cross_keys = [f"{l1}x{l2}" for l1, l2 in product(lines, repeat=2) if l1 < l2]
     try:
         filepath = f"{save_path}{filename}"
-        data = np.load(filepath, allow_pickle=True)
+        with open(filepath, 'rb') as f:
+            data = pickle.load(f)
         existing_results = {
             'k': data['k'],
             'seeds': data['seeds'],
-            'ps_cii': data['ps_cii'],
-            'ps_hi': data['ps_hi'],
-            'ps_co': data['ps_co'],
-            'ps_cross_hi': data['ps_cross_hi'],
-            'ps_cross_co': data['ps_cross_co'],
-            'ps_cross_cohi': data['ps_cross_cohi'],
             'means_and_densities': data['means_and_densities'],
             'metadata': {
                 'n_realizations': int(data['n_realizations']),
@@ -335,6 +369,15 @@ def load_existing_results(save_path=OUTDIR, filename=SAVEFILENAME):
                 'CO_line': data.get('CO_line', 'L43'),  # Default to CO(4-3) if not present
             }
         }
+        # Load auto power spectra
+        for line in lines:
+            key = f'ps_{line.lower()}'
+            existing_results[key] = data[key]
+        # Load cross power spectra
+        for cross_key in cross_keys:
+            key = f'ps_cross_{cross_key.lower()}'
+            existing_results[key] = data[key]
+        
         print(f"Found existing results with {len(data['seeds'])} realizations")
         return existing_results
     except FileNotFoundError:
@@ -357,6 +400,8 @@ def create_analyzer_from_cache(seed, cached_data):
     analyzer : PowerSpectrumAnalyzer
         Analyzer object with power spectra populated from cache
     """
+    lines = LINES
+    cross_keys = [f"{l1}x{l2}" for l1, l2 in product(lines, repeat=2) if l1 < l2]
     # Find the index of this seed in cached data
     seed_idx = np.where(cached_data['seeds'] == seed)[0][0]
     
@@ -364,17 +409,8 @@ def create_analyzer_from_cache(seed, cached_data):
     analyzer = PowerSpectrumAnalyzer(random_seed=seed)
     
     # Populate power spectra from cached data
-    analyzer.power_spectra = {
-        'CII': cached_data['ps_cii'][seed_idx],
-        'HI': cached_data['ps_hi'][seed_idx],
-        'CO': cached_data['ps_co'][seed_idx]
-    }
-    
-    analyzer.cross_power_spectra = {
-        'CIIxHI': cached_data['ps_cross_hi'][seed_idx],
-        'CIIxCO': cached_data['ps_cross_co'][seed_idx],
-        'COxHI': cached_data['ps_cross_cohi'][seed_idx]
-    }
+    analyzer.power_spectra = {line: cached_data[f'ps_{line.lower()}'][seed_idx] for line in lines}
+    analyzer.cross_power_spectra = {line: cached_data[f'ps_cross_{line.lower()}'][seed_idx] for line in cross_keys}
     
     analyzer.means_and_densities = cached_data['means_and_densities'][seed_idx]
     
@@ -396,6 +432,8 @@ def save_power_spectra(analyzers, seeds, save_path=OUTDIR, filename=SAVEFILENAME
     filename : str
         Name of the output file
     """
+    lines = LINES
+    cross_keys = [f"{l1}x{l2}" for l1, l2 in product(lines, repeat=2) if l1 < l2]
     # Get k bins from first analyzer (should be same for all)
     k = analyzers[0].k
     
@@ -404,49 +442,42 @@ def save_power_spectra(analyzers, seeds, save_path=OUTDIR, filename=SAVEFILENAME
     n_k = len(k)
     
     # Auto power spectra
-    ps_cii = np.zeros((n_realizations, n_k))
-    ps_hi = np.zeros((n_realizations, n_k))
-    ps_co = np.zeros((n_realizations, n_k))
-    
-    # Cross power spectra
-    ps_cross_hi = np.zeros((n_realizations, n_k))
-    ps_cross_co = np.zeros((n_realizations, n_k))
-    ps_cross_cohi = np.zeros((n_realizations, n_k))
+    all_auto_ps = {line: np.zeros((n_realizations, n_k)) for line in lines}
+    all_cross_ps = {cross_key: np.zeros((n_realizations, n_k)) for cross_key in cross_keys}
     
     # Mean properties data - store as object array to preserve structure
     means_and_densities = np.empty(n_realizations, dtype=object)
     
     # Fill arrays with data from each analyzer
     for i, analyzer in enumerate(analyzers):
-        ps_cii[i] = analyzer.power_spectra['CII']
-        ps_hi[i] = analyzer.power_spectra['HI']
-        ps_co[i] = analyzer.power_spectra['CO']
-        ps_cross_hi[i] = analyzer.cross_power_spectra['CIIxHI']
-        ps_cross_co[i] = analyzer.cross_power_spectra['CIIxCO']
-        ps_cross_cohi[i] = analyzer.cross_power_spectra['COxHI']
+        for line in lines:
+            all_auto_ps[line][i] = analyzer.power_spectra[line]
+        for cross_key in cross_keys:
+            all_cross_ps[cross_key][i] = analyzer.cross_power_spectra[cross_key]
+        means_and_densities[i] = analyzer.means_and_densities
         
         means_and_densities[i] = analyzer.means_and_densities
     
     # Save to compressed numpy file
     output_file = f"{save_path}{filename}"
-    np.savez_compressed(
-        output_file,
-        k=k,
-        seeds=np.array(seeds),
-        ps_cii=ps_cii,
-        ps_hi=ps_hi,
-        ps_co=ps_co,
-        ps_cross_hi=ps_cross_hi,
-        ps_cross_co=ps_cross_co,
-        ps_cross_cohi=ps_cross_cohi,
-        means_and_densities=means_and_densities,
-        # Metadata
-        n_realizations=n_realizations,
-        random_seed_base=RANDOM_SEED,
-        z_modeling=Z_MODELING,
-        grid_resolution=GRID_RESOLUTION,
-        CO_line=CO_LINE
-    )
+    
+    output_dict = {
+        'k': k,
+        'seeds': np.array(seeds),
+        'means_and_densities': means_and_densities,
+        'n_realizations': n_realizations,
+        'random_seed_base': RANDOM_SEED,
+        'z_modeling': Z_MODELING,
+        'grid_resolution': GRID_RESOLUTION,
+        'CO_line': CO_LINE,
+    }
+    for line in lines:
+        output_dict[f'ps_{line.lower()}'] = all_auto_ps[line]
+    for cross_key in cross_keys:
+        output_dict[f'ps_cross_{cross_key.lower()}'] = all_cross_ps[cross_key]
+    
+    with open(output_file, 'wb') as f:
+        pickle.dump(output_dict, f)
     
     print(f"Power spectra data saved to: {output_file}")
     print(f"Contains {n_realizations} realizations with {n_k} k-bins each")
@@ -455,6 +486,9 @@ def save_power_spectra(analyzers, seeds, save_path=OUTDIR, filename=SAVEFILENAME
 def plot_power_spectra(analyzers, fig_path=FIGDIR):
     """Plot power spectra and cross-correlation results."""
     analyzers = analyzers if isinstance(analyzers, list) else [analyzers]
+    lines = LINES
+    cross_keys = [f"{l1}x{l2}" for l1, l2 in product(lines, repeat=2) if l1 < l2]
+    colors = [f"C{i}" for i in range(len(lines) + len(cross_keys))]
     
     # Main power spectrum plot
     fig0, ax0 = plt.subplots(1, 2, figsize=(14, 6), sharex=True)
@@ -492,22 +526,17 @@ def plot_power_spectra(analyzers, fig_path=FIGDIR):
     
     for i, analyzer in enumerate(analyzers):
         k = analyzer.k
-        ps_cii = analyzer.power_spectra['CII']
-        ps_hi = analyzer.power_spectra['HI'] 
-        ps_co = analyzer.power_spectra['CO']
-        ps_cross_hi = analyzer.cross_power_spectra['CIIxHI']
-        ps_cross_co = analyzer.cross_power_spectra['CIIxCO']
-        ps_cross_cohi = analyzer.cross_power_spectra['COxHI']
+        # plot auto and cross power spectra
+        plot_data = []
+        for i, line in enumerate(lines):
+            if line not in analyzer.power_spectra:
+                raise ValueError(f"Power spectrum for {line} not found in analyzer")
+            plot_data.append((analyzer.power_spectra[line], colors[i], f"$P_{{{line}}}$"))
         
-        # Plot data
-        plot_data = [
-            (ps_cross_hi, 'k', '$P_{CII \\times HI}$'),
-            (ps_cii, 'b', '$P_{CII}$'),
-            (ps_hi, 'r', '$P_{HI}$'),
-            (ps_co, 'g', '$P_{CO}$'),
-            (ps_cross_co, 'm', '$P_{CII \\times CO}$'),
-            (ps_cross_cohi, 'c', '$P_{CO \\times HI}$')
-        ]
+        for j, cross_key in enumerate(cross_keys):
+            if cross_key not in analyzer.cross_power_spectra:
+                raise ValueError(f"Cross power spectrum for {cross_key} not found in analyzer")
+            plot_data.append((analyzer.cross_power_spectra[cross_key], colors[len(lines)+j], f"$P_{{{cross_key}}}$"))
         
         for ps_data, color, label in plot_data:
             lab = label if i == 0 else None  # Only add label for the first plot
@@ -517,16 +546,17 @@ def plot_power_spectra(analyzers, fig_path=FIGDIR):
         ax0[0].legend(loc='upper right')
         ax0[1].legend(loc='upper right')
         
-        # Cross-correlation coefficient plot
-        prod_ps_hi = np.sqrt(ps_cii * ps_hi)
-        prod_ps_co = np.sqrt(ps_cii * ps_co)
-        prod_ps_cohi = np.sqrt(ps_co * ps_hi)
-        lab1 = r'$i$ = CII, $j$ = HI'
-        lab2 = r'$i$ = CII, $j$ = CO'
-        lab3 = r'$i$ = CO, $j$ = HI'
-        ax1.plot(k, ps_cross_hi / prod_ps_hi, lw=1, color='k', label=lab1, alpha=0.25)
-        ax1.plot(k, ps_cross_co / prod_ps_co, lw=1, color='m', label=lab2, alpha=0.25)
-        ax1.plot(k, ps_cross_cohi / prod_ps_cohi, lw=1, color='c', label=lab3, alpha=0.25) 
+        for j, cross_key in enumerate(cross_keys):
+            if "galaxy" in cross_key:
+                line1, line2 = cross_key.split('x')[0], "galaxy"
+            else:
+                line1, line2 = cross_key.split('x')
+            ps_cross = analyzer.cross_power_spectra[cross_key]
+            ps1 = analyzer.power_spectra[line1]
+            ps2 = analyzer.power_spectra[line2]
+            prod_ps = np.sqrt(ps1 * ps2)
+            lab = f"$i$ = {line1}, $j$ = {line2}" if i == 0 else None
+            ax1.plot(k, ps_cross / prod_ps, lw=1, label=lab, alpha=0.25, color=colors[len(lines)+j])
         ax1.legend(loc='upper right') if i == 0 else None
 
     fig0.suptitle(f'Power Spectra for CII, HI, and CO at z={Z_MODELING} (N={len(analyzers)})')
@@ -537,25 +567,18 @@ def plot_power_spectra(analyzers, fig_path=FIGDIR):
     if n_realizations > 1:
         k = analyzers[0].k
         
-        # Collect all power spectra
-        all_ps_cii = np.array([analyzer.power_spectra['CII'] for analyzer in analyzers])
-        all_ps_hi = np.array([analyzer.power_spectra['HI'] for analyzer in analyzers])
-        all_ps_co = np.array([analyzer.power_spectra['CO'] for analyzer in analyzers])
-        all_ps_cross_hi = np.array([analyzer.cross_power_spectra['CIIxHI'] for analyzer in analyzers])
-        all_ps_cross_co = np.array([analyzer.cross_power_spectra['CIIxCO'] for analyzer in analyzers])
-        all_ps_cross_cohi = np.array([analyzer.cross_power_spectra['COxHI'] for analyzer in analyzers])
+        ps_data_sets = []
         
+        for i, line in enumerate(lines):
+            all_ps = np.array([analyzer.power_spectra[line] for analyzer in analyzers])
+            ps_data_sets.append((all_ps, colors[i], f"$P_{{{line}}}$"))
+        
+        for j, cross_key in enumerate(cross_keys):
+            all_ps = np.array([analyzer.cross_power_spectra[cross_key] for analyzer in analyzers])
+            ps_data_sets.append((all_ps, colors[len(lines)+j], f"$P_{{{cross_key}}}$"))
+    
         # Calculate percentiles (16th, 50th, 84th for 1-sigma)
         percentiles = [16, 50, 84]
-        
-        ps_data_sets = [
-            (all_ps_cross_hi, 'k', '$P_{CII \\times HI}$'),
-            (all_ps_cii, 'b', '$P_{CII}$'),
-            (all_ps_hi, 'r', '$P_{HI}$'),
-            (all_ps_co, 'g', '$P_{CO}$'),
-            (all_ps_cross_co, 'm', '$P_{CII \\times CO}$'),
-            (all_ps_cross_cohi, 'c', '$P_{CO \\times HI}$')
-        ]
         
         for ps_data, color, label in ps_data_sets:
             # Calculate percentiles
@@ -579,33 +602,29 @@ def plot_power_spectra(analyzers, fig_path=FIGDIR):
         fig2.suptitle(f'Power Spectra with percentile bands at z={Z_MODELING} (N={n_realizations})')
         fig2.savefig(f'{fig_path}cross_ps_fb_{Z_MODELING:.2f}.png', dpi=300, bbox_inches='tight')
         
-        # Cross-correlation coefficient uncertainty bands
-        all_cross_coeff_hi = all_ps_cross_hi / np.sqrt(all_ps_cii * all_ps_hi)
-        all_cross_coeff_co = all_ps_cross_co / np.sqrt(all_ps_cii * all_ps_co)
-        all_cross_coeff_cohi = all_ps_cross_cohi / np.sqrt(all_ps_co * all_ps_hi)
-        
-        # Calculate percentiles for cross-correlation coefficients
-        coeff_hi_p16, coeff_hi_p50, coeff_hi_p84 = np.percentile(all_cross_coeff_hi, percentiles, axis=0)
-        coeff_co_p16, coeff_co_p50, coeff_co_p84 = np.percentile(all_cross_coeff_co, percentiles, axis=0)
-        coeff_cohi_p16, coeff_cohi_p50, coeff_cohi_p84 = np.percentile(all_cross_coeff_cohi, percentiles, axis=0)
-        
-        # Plot cross-correlation coefficients with uncertainty bands
-        ax4.plot(k, coeff_hi_p50, lw=2, color='k', label=lab1)
-        ax4.fill_between(k, coeff_hi_p16, coeff_hi_p84, color='k', alpha=0.2)
-
-        ax4.plot(k, coeff_co_p50, lw=2, color='m', label=lab2)
-        ax4.fill_between(k, coeff_co_p16, coeff_co_p84, color='m', alpha=0.2)
-
-        ax4.plot(k, coeff_cohi_p50, lw=2, color='c', label=lab3)
-        ax4.fill_between(k, coeff_cohi_p16, coeff_cohi_p84, color='c', alpha=0.2)
+        for j, cross_key in enumerate(cross_keys):
+            if "galaxy" in cross_key:
+                line1, line2 = cross_key.split('x')[0], "galaxy"
+            else:
+                line1, line2 = cross_key.split('x')
+            all_ps_cross = np.array([analyzer.cross_power_spectra[cross_key] for analyzer in analyzers])
+            all_ps1 = np.array([analyzer.power_spectra[line1] for analyzer in analyzers])
+            all_ps2 = np.array([analyzer.power_spectra[line2] for analyzer in analyzers])
+            
+            prod_ps = np.sqrt(all_ps1 * all_ps2)
+            
+            # Calculate percentiles for cross-correlation coefficients
+            coeffs = all_ps_cross / prod_ps
+            p16, p50, p84 = np.percentile(coeffs, percentiles, axis=0)
+            
+            lab = f"$i$ = {line1}, $j$ = {line2}"
+            ax4.plot(k, p50, lw=2, label=lab, color=colors[len(lines)+j])
+            ax4.fill_between(k, p16, p84, alpha=0.2, color=colors[len(lines)+j])
 
         ax4.legend(loc='upper right')
 
         fig4.savefig(f'{fig_path}cross_coeff_fb_{Z_MODELING:.2f}.png', dpi=300, bbox_inches='tight')
         
-        # Clean up large arrays
-        del all_ps_cii, all_ps_hi, all_ps_co, all_ps_cross_hi, all_ps_cross_co
-        del all_cross_coeff_hi, all_cross_coeff_co
         gc.collect()
     else:
         print("Need more than 1 realization for uncertainty bands")
