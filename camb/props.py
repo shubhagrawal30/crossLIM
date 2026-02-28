@@ -28,7 +28,8 @@ TIM.LW = AttrDict()
 TIM.SW.min = 240 * u.micron
 TIM.SW.max = 317 * u.micron
 TIM.SW.NEI = 12.41e7 * u.Jy * (u.s ** .5)
-TIM.SW.num_dets = 64
+# TIM.SW.num_dets = 64
+TIM.SW.num_dets = 51 # 2025 TIM change
 TIM.SW.dnu = 4.4 * u.GHz
 
 TIM.LW.min = 317 * u.micron
