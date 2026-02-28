@@ -1,2 +1,2 @@
-# CIIxHI
-Forecasting the Terahertz Intensity Mapper's cross-correlation sensitivities with other line intensity mapping instruments.
+# LIM at Cosmic Noon
+Forecasting line-auto, line x line, and line x galaxy correlations for three generations of line intensity mapping instruments.
